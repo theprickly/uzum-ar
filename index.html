@@ -442,11 +442,30 @@ function stageMap(s){ const r=stage.getBoundingClientRect(), sc=Math.max(r.width
 function focal(s,M){ const fLong=(Math.max(s.w,s.h)/2)/Math.tan(33*Math.PI/180); return fLong*M.sc; }
 let yawCur=0;
 let qPrev=null, tPrev=null; const _m=new THREE.Matrix4(), _q=new THREE.Quaternion(), _t=new THREE.Vector3(), _s=new THREE.Vector3();
-function applyPose(pose){
+/* ---- gyroscope: keeps the card anchored in space between camera frames and when the card leaves the frame ---- */
+let gyroOn=false, qDev=new THREE.Quaternion(), qDevPrev=null, gyroSeen=0;
+const _q1=new THREE.Quaternion(-Math.sqrt(.5),0,0,Math.sqrt(.5)), _z=new THREE.Vector3(0,0,1), _eul=new THREE.Euler(), _qs=new THREE.Quaternion(), _dq=new THREE.Quaternion();
+addEventListener("deviceorientation",e=>{ if(e.alpha==null||e.beta==null) return; const D=Math.PI/180;
+  const orient=((screen.orientation&&screen.orientation.angle)||window.orientation||0)*D;
+  _eul.set(e.beta*D,e.alpha*D,-e.gamma*D,"YXZ"); qDev.setFromEuler(_eul).multiply(_q1).multiply(_qs.setFromAxisAngle(_z,-orient));
+  gyroOn=true; gyroSeen=performance.now(); },true);
+function gyroLive(){ return mode==='cam' && gyroOn && performance.now()-gyroSeen<500; }
+async function askGyro(){ try{ if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.requestPermission==="function") await DeviceOrientationEvent.requestPermission(); }catch(e){} }
+function gyroPredict(){
+  if(!gyroLive()){ qDevPrev=null; return; }
+  if(qDevPrev&&qPrev){ _dq.copy(qDev).invert().multiply(qDevPrev); tPrev.applyQuaternion(_dq); qPrev.premultiply(_dq); }
+  qDevPrev=qDev.clone();
+}
+function visionCorrect(pose){
   const {r1,r2,r3,t}=pose;
   _m.set(r1[0],r2[0],r3[0],t[0], -r1[1],-r2[1],-r3[1],-t[1], -r1[2],-r2[2],-r3[2],-t[2], 0,0,0,1); _m.decompose(_t,_q,_s);
-  if(!qPrev){ qPrev=_q.clone(); tPrev=_t.clone(); }
-  else { const ang=qPrev.angleTo(_q), k=clamp(.25+ang*3,.25,.9); qPrev.slerp(_q,k); tPrev.lerp(_t,clamp(.35+tPrev.distanceTo(_t)*.08,.35,.9)); }
+  if(!qPrev){ qPrev=_q.clone(); tPrev=_t.clone(); return; }
+  const g=gyroLive(), ang=qPrev.angleTo(_q), dist=tPrev.distanceTo(_t);
+  const kr=g?clamp(.12+ang*2,.12,.8):clamp(.25+ang*3,.25,.9), kt=g?clamp(.2+dist*.06,.2,.85):clamp(.35+dist*.08,.35,.9);
+  qPrev.slerp(_q,kr); tPrev.lerp(_t,kt);
+}
+function commitPose(){
+  if(!qPrev) return;
   world.matrix.compose(tPrev,qPrev,_s.set(1,1,1));
   world.matrixWorldNeedsUpdate=true; scene.updateMatrixWorld(true);
   const camLocal=root.worldToLocal(V3(0,0,0)); const yaw=Math.atan2(camLocal.x,camLocal.z);
@@ -676,6 +695,7 @@ function tick(t){
   if(s){
     frames++;
     const M=stageMap(s), f=focal(s,M);
+    gyroPredict();
     const r=detect(s.el,s.w,s.h);
     if(r){
       miss=0; seen++;
@@ -685,7 +705,7 @@ function tick(t){
         raw=[0,1,2,3].map(i=>img[(i+bestR)%4]); }
       corners=raw.map((c,i)=>[filt[i*2].f(c[0],t),filt[i*2+1].f(c[1],t)]);
       const pose=poseFromCorners(corners,f,M.W/2,M.H/2);
-      if(pose){ resizeGL(M.W,M.H,f); applyPose(pose); poseOK=true; }
+      if(pose){ resizeGL(M.W,M.H,f); visionCorrect(pose); poseOK=true; }
       quad=corners; const xs=corners.map(c=>c[0]), ys=corners.map(c=>c[1]);
       lastP={x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys),cx:xs.reduce((a,b)=>a+b)/4,cy:ys.reduce((a,b)=>a+b)/4};
       anchor.style.transform=`translate3d(${lastP.x}px,${lastP.y}px,0)`; anchor.style.width=lastP.w+"px"; anchor.style.height=lastP.h+"px";
@@ -696,9 +716,12 @@ function tick(t){
       else if(seen>=5&&!shown&&exitT>0){ exitT=-1; appear(); }
     } else {
       seen=0; miss++;
-      if(miss>18){ corners=null; resetFilt(); qPrev=null; if(!shown||leaving) $("#reticle").hidden=false; if(shown&&!leaving) startLeaving(); }
+      const hold=(gyroLive()&&qPrev)?150:18;           // with gyro the mascot stays put in space for ~3-5 s
+      if(miss>8){ corners=null; resetFilt(); }
+      if(miss>hold){ qPrev=null; if(!shown||leaving) $("#reticle").hidden=false; if(shown&&!leaving) startLeaving(); }
     }
   }
+  commitPose();
   updateLight();
   if(yawG.visible){
     const k=entranceScale(t); actor.scale.setScalar(.92*Math.max(.001,k)); actor.position.y=(1-Math.min(1,k))*-2;
@@ -725,7 +748,7 @@ function setMode(m){
 async function startCamera(){
   try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false});
     vid.srcObject=stream; await vid.play(); setMode("cam"); return true; }catch(e){ stopStream(); return false; } }
-function unlockAudio(){ ac(); SFX.pop();
+function unlockAudio(){ ac(); SFX.pop(); askGyro();
   try{ const u=new SpeechSynthesisUtterance(" "); u.volume=0; speechSynthesis.speak(u); }catch(e){}
   try{ document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen({navigationUI:"hide"}).catch(()=>{}); }catch(e){}
   try{ navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{}); }catch(e){} }
