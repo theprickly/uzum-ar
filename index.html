@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0E0A1A">
+<meta name="description" content="Наведи камеру на карту Uzum — и она оживёт">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>*,*::before,*::after{box-sizing:border-box}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<title>Uzum AR-карта</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Golos+Text:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-height camera stage edge to edge, rigged card mascot stands on the detected card, bottom sheet carries its speech */
+:root{
+  --ink:#0E0A1A; --panel:#171029; --line:#2E2350; --plum:#7000FF; --lilac:#C9B3FF;
+  --mint:#3DF5B0; --paper:#F5F2FF; --muted:#A79DC4; --tag:#FFFFFF; --tagInk:#1A1230;
+  --f-display:"Unbounded", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Golos Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--ink);color:var(--paper);font-family:var(--f-body);font-size:15px;overflow:hidden}
+.app{height:100%;display:flex;flex-direction:column;max-width:560px;margin:0 auto;background:var(--ink)}
+.gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:10px}
+.brand{font-family:var(--f-display);font-weight:700;font-size:15px}
+.brand span{color:var(--lilac)}
+.status{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:background .3s}
+.status.on{color:var(--mint)}
+.status.on .dot{background:var(--mint);box-shadow:0 0 0 4px rgba(61,245,176,.18)}
+.link{background:none;border:0;color:var(--lilac);font:500 13px var(--f-body);cursor:pointer;padding:6px 0}
+button:focus-visible,label.btn:focus-within,input:focus-visible,#hero:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+
+.stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#000}
+.src{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;max-width:100%}
+#fx{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
+.reticle{position:absolute;left:50%;top:58%;width:62%;max-width:300px;aspect-ratio:1.586;transform:translate(-50%,-50%);z-index:2;pointer-events:none;
+  border:2px dashed rgba(201,179,255,.55);border-radius:14px;display:grid;place-items:center;color:var(--lilac);font-size:12px;letter-spacing:.06em;text-transform:uppercase;text-align:center;padding:8px}
+.reticle::after{content:"";position:absolute;left:6%;right:6%;height:2px;background:var(--mint);box-shadow:0 0 12px var(--mint);top:10%;animation:scan 1.8s ease-in-out infinite alternate}
+@keyframes scan{to{top:88%}}
+
+#hero{position:absolute;left:0;top:0;z-index:3;width:220px;cursor:pointer;will-change:transform;-webkit-tap-highlight-color:transparent}
+#hero .pop{transform:scale(0) translateY(30%);transform-origin:56% 92%;transition:transform .55s cubic-bezier(.34,1.56,.64,1)}
+#hero.in .pop{transform:none}
+#hero svg{display:block;width:100%;height:auto;overflow:visible}
+.htag{position:absolute;bottom:80%;left:60%;max-width:200px;background:var(--tag);color:var(--tagInk);font:700 13px/1.25 var(--f-display);padding:7px 11px;border-radius:14px 14px 14px 3px;box-shadow:0 6px 18px rgba(0,0,0,.35);transform-origin:0 100%;animation:tagIn .4s cubic-bezier(.34,1.56,.64,1);text-wrap:balance}
+.htag.react{background:var(--mint)}
+@keyframes tagIn{from{transform:scale(.3);opacity:0}}
+
+.start{position:absolute;inset:0;z-index:5;background:rgba(14,10,26,.92);display:flex;flex-direction:column;justify-content:center;gap:14px;overflow:auto;padding-block:20px}
+.start h1{font:700 clamp(21px,6vw,28px)/1.15 var(--f-display);margin:0;text-wrap:balance;max-width:17ch}
+.start h1 span{color:var(--lilac)}
+.start p{margin:0;color:var(--muted);line-height:1.5;max-width:40ch}
+.start .mini{width:110px;max-width:100%}
+.btns{display:grid;gap:10px;max-width:360px}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--panel);color:var(--paper);font:600 15px var(--f-body);cursor:pointer;padding:0 16px;text-align:center;position:relative}
+.btn.primary{background:var(--plum);border-color:var(--plum)}
+.vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.note{font-size:13px;color:var(--lilac);min-height:1em;max-width:44ch;line-height:1.45}
+
+.sheet{background:var(--panel);border-top:1px solid var(--line);padding-block:14px 16px;min-height:182px;display:flex;flex-direction:column;gap:6px}
+.kicker{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mint);font-variant-numeric:tabular-nums}
+.sheet h2{margin:0;font:700 17px/1.25 var(--f-display);text-wrap:balance}
+.sheet p{margin:0;line-height:1.5;color:#DCD4F2;min-height:3em;max-width:60ch}
+.ctrl{display:flex;align-items:center;gap:10px;margin-top:auto;padding-top:6px}
+.dots{display:flex;gap:5px;flex:1;min-width:0}
+.dots i{width:14px;height:4px;border-radius:2px;background:var(--line)}
+.dots i.on{background:var(--lilac)}
+.chip{min-height:40px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--paper);font:500 13px var(--f-body);cursor:pointer;white-space:nowrap}
+.chip[aria-pressed="true"]{border-color:var(--mint);color:var(--mint)}
+.chip.go{background:var(--plum);border-color:var(--plum)}
+.chip:disabled{opacity:.4;cursor:default}
+@media (prefers-reduced-motion:reduce){ .reticle::after{animation:none} #hero .pop{transition:none} }
+</style>
+
+<div class="app">
+  <header class="top gut">
+    <div class="brand">uzum <span>AR</span></div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusTxt">Готов</span></div>
+    <button class="link" id="modeBtn" hidden>Сменить режим</button>
+  </header>
+
+  <main class="stage" id="stage">
+    <video class="src" id="vid" playsinline muted hidden></video>
+    <img class="src" id="photo" alt="Снимок карты" hidden>
+    <canvas class="src" id="demo" hidden></canvas>
+    <canvas id="fx"></canvas>
+    <div class="reticle" id="reticle" hidden>Ищу карту Uzum</div>
+
+    <div id="hero" hidden role="button" tabindex="0" aria-label="Маскот карты Uzum, нажми на него">
+      <div class="pop">
+        <div class="htag" id="htag" hidden></div>
+        <svg viewBox="-200 -260 1420 1290" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs><clipPath id="mclip"><path id="mclipP"/></clipPath></defs>
+          <ellipse id="gshadow" cx="600" cy="918" rx="330" ry="26" fill="#000" opacity=".3"/>
+          <g id="rig">
+            <g fill="none" stroke="#fff" stroke-linecap="round">
+              <path id="oLA" stroke-width="40"/><path id="oLH" stroke-width="58"/><path id="oLF" stroke-width="26"/>
+              <path id="oLL" stroke-width="40"/><path id="oLS" stroke-width="48"/>
+              <path id="oRL" stroke-width="40"/><path id="oRS" stroke-width="48"/>
+            </g>
+            <g fill="none" stroke="#121212" stroke-linecap="round">
+              <path id="LA" stroke-width="26"/><path id="LH" stroke-width="46"/><path id="LF" stroke-width="14"/>
+              <path id="LL" stroke-width="26"/><path id="LS" stroke-width="36"/>
+              <path id="RL" stroke-width="26"/><path id="RS" stroke-width="36"/>
+            </g>
+            <image id="bodyImg" href="body.webp" x="0" y="0" width="1003" height="923"/>
+            <g transform="translate(540 341) rotate(27)">
+              <ellipse cx="-95" cy="58" rx="28" ry="13" fill="#FF6FB5" opacity=".38"/>
+              <ellipse cx="112" cy="58" rx="28" ry="13" fill="#FF6FB5" opacity=".38"/>
+              <ellipse id="eL" rx="21" ry="27" fill="#141414"/><ellipse id="eR" rx="21" ry="27" fill="#141414"/>
+              <circle id="gL" r="7" fill="#fff"/><circle id="gR" r="7" fill="#fff"/>
+              <path id="aL" fill="none" stroke="#141414" stroke-width="9" stroke-linecap="round"/>
+              <path id="aR" fill="none" stroke="#141414" stroke-width="9" stroke-linecap="round"/>
+              <path id="bL" fill="none" stroke="#141414" stroke-width="8" stroke-linecap="round"/>
+              <path id="bR" fill="none" stroke="#141414" stroke-width="8" stroke-linecap="round"/>
+              <path id="mouth" fill="#141414" stroke="#141414" stroke-width="7" stroke-linejoin="round"/>
+              <ellipse id="tongue" fill="#FF6FA8" clip-path="url(#mclip)"/>
+            </g>
+            <g fill="none" stroke="#fff" stroke-linecap="round">
+              <path id="oRA" stroke-width="40"/><path id="oRH" stroke-width="58"/><path id="oRF" stroke-width="26"/>
+            </g>
+            <g fill="none" stroke="#121212" stroke-linecap="round">
+              <path id="RA" stroke-width="26"/><path id="RH" stroke-width="46"/><path id="RF" stroke-width="14"/>
+            </g>
+            <g id="coin" opacity="0">
+              <circle r="46" fill="#FFC531" stroke="#B87900" stroke-width="7"/>
+              <text y="17" text-anchor="middle" font-family="Unbounded, sans-serif" font-weight="700" font-size="48" fill="#B87900">%</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <section class="start gut" id="start">
+      <img class="mini" src="mascot.webp" alt="Маскот карты Uzum">
+      <h1>Наведи камеру на <span>карту Uzum</span></h1>
+      <p>Когда фиолетовая карта попадёт в кадр, рядом с ней оживёт маскот и расскажет, чем она выгодна.</p>
+      <div class="btns">
+        <button class="btn primary" id="camBtn">Включить камеру</button>
+        <label class="btn" for="photoIn">Сфотографировать карту<input class="vh" type="file" id="photoIn" accept="image/*" capture="environment"></label>
+        <button class="btn" id="demoBtn">Демо без карты</button>
+      </div>
+      <div class="note" id="startMsg" role="status"></div>
+    </section>
+  </main>
+
+  <section class="sheet gut" aria-live="polite">
+    <div class="kicker" id="kicker">Режим ожидания</div>
+    <h2 id="title">Положи карту на стол</h2>
+    <p id="line">Держи телефон в 20–30 см от карты, при хорошем свете. Маскот появится сам.</p>
+    <div class="ctrl">
+      <div class="dots" id="dots"></div>
+      <button class="chip" id="voiceBtn" aria-pressed="false">Голос</button>
+      <button class="chip go" id="nextBtn" disabled>Дальше</button>
+    </div>
+  </section>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------------- scripts ---------------- */
+const SCRIPTS={
+  main:[
+    {pose:"wave",  num:"Привет!",     title:"Я — карта Uzum", text:"Да-да, та самая, что у тебя в руках. Дебетовая Visa от Uzum Bank. Сейчас расскажу, почему меня стоит держать в кошельке первой."},
+    {pose:"shrug", num:"0 сум",       title:"Выпуск и обслуживание", text:"Выпустить меня и пользоваться мной — бесплатно. Ни сума за обслуживание. Сам в шоке."},
+    {pose:"proud", num:"0% комиссии", title:"Пополнение с любых карт", text:"Деньги с Uzcard или Humo любого банка заходят на меня без комиссии — в приложении Uzum Bank. Терминалу за это платить не нужно."},
+    {pose:"point", num:"0% комиссии", title:"Переводы между картами Uzum", text:"Отправить деньги другу на его карту Uzum — бесплатно. Вон он, кстати, стоит."},
+    {pose:"dance", num:"Visa",        title:"Работаю везде", text:"Мной можно платить в магазинах, в интернете и за границей. Я обожаю путешествовать."},
+    {pose:"coin",  num:"Кэшбэк",      title:"Возвращаю деньги", text:"За покупки капает кэшбэк, а в Uzum Market и Uzum Tezkor для меня есть спецпредложения."},
+    {pose:"shush", num:"Тсс…",        title:"Наш секрет", text:"Никому не говори мой PIN-код и три цифры с обратной стороны. Даже если звонят «из банка». Особенно если звонят «из банка»."},
+    {pose:"five",  num:"Дай пять!",   title:"Мы теперь команда", text:"Нажми на меня и отбей пять. А потом пойдём что-нибудь купить.", tap:"five"}
+  ]
+};
+const REACTIONS=["Ой, щекотно!","Эй, это мой чип!","Я карта, а не кнопка лифта!","Ещё раз — и начислю кэшбэк за щекотку","Хи-хи. Ладно, продолжаем","Осторожно, я бесконтактный!"];
+let script="main";
+
+/* ---------------- rig: poses ---------------- */
+const SL=[217,294], SR=[960,500], HL=[440,668], HR=[810,731], PIV=[600,905];
+const base={lc:[-70,70],le:[-60,190],rc:[70,70],re:[60,190],llc:[-10,120],lle:[-50,232],rlc:[10,70],rle:[28,150],
+  m:[44,8,46],eye:1,ex:0,ey:0,brow:0,tilt:0,hop:0,sq:0,ol:0,or:0,coin:0};
+const pose=(o,osc)=>Object.assign(JSON.parse(JSON.stringify(base)),o,{osc});
+const S_=Math.sin, A_=Math.abs;
+const POSES={
+  idle: pose({},(t,s)=>{s.sq+=S_(t*.003)*.012; s.le[0]+=S_(t*.002)*8; s.re[0]-=S_(t*.002)*8;}),
+  wave: pose({lc:[-140,-40],le:[-150,-235],m:[52,8,60],tilt:-4,ol:1},(t,s)=>{s.le[0]+=S_(t*.013)*48; s.lc[0]+=S_(t*.013)*18; s.sq+=S_(t*.003)*.01;}),
+  shrug:pose({lc:[-120,0],le:[-235,-80],rc:[120,0],re:[235,-80],ol:1,or:1,m:[24,-4,44],eye:1.25,brow:1},(t,s)=>{const k=A_(S_(t*.006)); s.le[1]-=k*26; s.re[1]-=k*26; s.hop-=k*10; s.tilt+=S_(t*.003)*3;}),
+  proud:pose({lc:[-150,90],le:[10,190],rc:[150,90],re:[-10,190],m:[58,4,38],eye:.35,tilt:-3},(t,s)=>{s.tilt+=S_(t*.0025)*3; s.sq+=S_(t*.003)*.01;}),
+  point:pose({rc:[120,-40],re:[255,-185],or:.35,ex:12,m:[44,6,44],tilt:5},(t,s)=>{s.re[0]+=S_(t*.008)*10; s.re[1]+=S_(t*.008)*6;}),
+  dance:pose({lc:[-60,-140],le:[-40,-285],rc:[60,-140],re:[40,-285],ol:.8,or:.8,m:[54,8,62],eye:.35},(t,s)=>{const w=t*.008; s.tilt+=S_(w)*10; s.hop-=A_(S_(w))*70; s.le[0]+=S_(w*2)*40; s.re[0]-=S_(w*2)*40; s.lle[1]-=Math.max(0,S_(w))*70; s.rle[1]-=Math.max(0,-S_(w))*50; s.lle[0]-=Math.max(0,S_(w))*30;}),
+  coin: pose({rc:[90,20],re:[150,-95],or:1,coin:1,ey:-8,ex:8,m:[48,6,54]},(t,s)=>{s.re[1]+=A_(S_(t*.009))*14;}),
+  think:pose({rc:[120,-70],re:[-25,-205],or:.6,ex:10,ey:-10,m:[18,-2,6],brow:.7,tilt:-6},(t,s)=>{s.re[0]+=S_(t*.035)*12; s.re[1]+=S_(t*.035)*5; s.ex+=S_(t*.002)*5;}),
+  shush:pose({lc:[30,175],le:[292,128],ol:.3,lfront:1,m:[13,0,18],tilt:-5},(t,s)=>{s.ex=S_(t*.0035)*14; s.ey=-3;}),
+  five: pose({rc:[60,-160],re:[100,-335],or:1,m:[56,8,62],brow:.4},(t,s)=>{s.re[1]+=S_(t*.01)*12; s.re[0]+=S_(t*.01)*6; s.hop-=A_(S_(t*.005))*14;}),
+  giggle:pose({lc:[60,80],le:[185,60],rc:[-60,80],re:[-185,60],eye:.3,m:[50,10,46]},(t,s)=>{s.tilt+=S_(t*.05)*6; s.sq+=S_(t*.06)*.03; s.hop-=A_(S_(t*.02))*12;}),
+  sad:  pose({lc:[-40,90],le:[-30,212],rc:[40,90],re:[30,212],m:[34,-26,6],eye:.85,brow:.8,tilt:8,ey:6},(t,s)=>{s.ex=S_(t*.006)*16;}),
+  look: pose({ey:14,ex:4,m:[30,0,30],eye:1.15,brow:.6,lc:[-80,40],le:[-120,150]},(t,s)=>{s.tilt+=S_(t*.003)*2;})
+};
+const S=JSON.parse(JSON.stringify(base));
+let lFront=false;
+function setLeftFront(on){ if(on===lFront) return; lFront=on; const back=[R.oLA.parentNode,R.LA.parentNode], front=[R.oRA.parentNode,R.RA.parentNode];
+  const tgt=on?front:back; ["oLA","oLH","oLF"].forEach(k=>tgt[0].appendChild(R[k])); ["LA","LH","LF"].forEach(k=>tgt[1].appendChild(R[k])); }
+let poseName="idle", tempPose=null, tempUntil=0, talking=false, blinkAt=0, blinkUntil=0;
+const el=id=>document.getElementById(id);
+const R={}; ["oLA","oLH","oLF","oLL","oLS","oRL","oRS","LA","LH","LF","LL","LS","RL","RS","oRA","oRH","oRF","RA","RH","RF","eL","eR","gL","gR","aL","aR","bL","bR","mouth","tongue","mclipP","rig","coin","gshadow"].forEach(k=>R[k]=el(k));
+
+function lerpState(T,k){
+  for(const key in base){
+    if(Array.isArray(base[key])) for(let i=0;i<S[key].length;i++) S[key][i]+= (T[key][i]-S[key][i])*k;
+    else S[key]+= (T[key]-S[key])*k;
+  }
+}
+const f1=n=>Math.round(n*10)/10;
+function curve(o,c,e){ return `M${f1(o[0])},${f1(o[1])} Q${f1(o[0]+c[0])},${f1(o[1]+c[1])} ${f1(o[0]+e[0])},${f1(o[1]+e[1])}`; }
+function hand(o,c,e,open){
+  const E=[o[0]+e[0],o[1]+e[1]], C=[o[0]+c[0],o[1]+c[1]];
+  let dx=E[0]-C[0], dy=E[1]-C[1]; const L=Math.hypot(dx,dy)||1; dx/=L; dy/=L;
+  let f="";
+  if(open>.05){
+    for(const ang of [-.75,-.25,.25,.75]){
+      const ca=Math.cos(ang), sa=Math.sin(ang), x=dx*ca-dy*sa, y=dx*sa+dy*ca, len=(ang===-.75?24:34)*open;
+      f+=`M${f1(E[0]+x*16)},${f1(E[1]+y*16)} l${f1(x*len)},${f1(y*len)} `;
+    }
+  }
+  return {dot:`M${f1(E[0])},${f1(E[1])} l.1,0`, fingers:f, E};
+}
+function shoe(o,e,dir){ const x=o[0]+e[0], y=o[1]+e[1]+6; return `M${f1(x-14*dir)},${f1(y)} L${f1(x+30*dir)},${f1(y)}`; }
+function setD(a,b,d){ R[a].setAttribute("d",d); R[b].setAttribute("d",d); }
+
+function renderRig(t){
+  const name = (tempPose && t<tempUntil) ? tempPose : poseName;
+  if(tempPose && t>=tempUntil) tempPose=null;
+  lerpState(POSES[name], .16); setLeftFront(!!POSES[name].lfront);
+  const F=JSON.parse(JSON.stringify(S));
+  if(!reduceMotion && POSES[name].osc) POSES[name].osc(t,F);
+  if(talking){ F.m[2]=Math.max(6,F.m[2])*(.45+.55*A_(S_(t*.028))); F.m[0]*=.92+.08*A_(S_(t*.02)); }
+  if(t>blinkAt){ blinkUntil=t+130; blinkAt=t+2400+Math.random()*3200; }
+  const blink = t<blinkUntil ? .12 : 1;
+
+  setD("oLA","LA",curve(SL,F.lc,F.le));
+  const hl=hand(SL,F.lc,F.le,F.ol); setD("oLH","LH",hl.dot); setD("oLF","LF",hl.fingers);
+  setD("oRA","RA",curve(SR,F.rc,F.re));
+  const hr=hand(SR,F.rc,F.re,F.or); setD("oRH","RH",hr.dot); setD("oRF","RF",hr.fingers);
+  setD("oLL","LL",curve(HL,F.llc,F.lle)); setD("oLS","LS",shoe(HL,F.lle,-1));
+  setD("oRL","RL",curve(HR,F.rlc,F.rle)); setD("oRS","RS",shoe(HR,F.rle,1));
+
+  const happy=F.eye<.5;
+  [["L",-93],["R",93]].forEach(([s,x0])=>{
+    const x=x0+F.ex, y=F.ey, es=Math.max(.08,(happy?1:F.eye)*blink);
+    const e=R["e"+s]; e.setAttribute("cx",f1(x)); e.setAttribute("cy",f1(y)); e.setAttribute("ry",f1(27*es)); e.setAttribute("opacity",happy?0:1);
+    const g=R["g"+s]; g.setAttribute("cx",f1(x-7)); g.setAttribute("cy",f1(y-10*es)); g.setAttribute("opacity",(!happy&&blink===1)?1:0);
+    R["a"+s].setAttribute("d",`M${f1(x-20)},${f1(y+6)} Q${f1(x)},${f1(y-22)} ${f1(x+20)},${f1(y+6)}`); R["a"+s].setAttribute("opacity",happy?1:0);
+    const by=y-52-F.brow*16; R["b"+s].setAttribute("d",`M${f1(x-24)},${f1(by+8)} Q${f1(x)},${f1(by-8)} ${f1(x+24)},${f1(by+8)}`); R["b"+s].setAttribute("opacity",f1(Math.min(1,F.brow)));
+  });
+  const [w,c,h]=F.m, mx=15, my=90;
+  const md=`M${f1(mx-w)},${my} Q${mx},${f1(my+c)} ${f1(mx+w)},${my} Q${mx},${f1(my+c+2*h)} ${f1(mx-w)},${my}Z`;
+  R.mouth.setAttribute("d",md); R.mclipP.setAttribute("d",md);
+  R.tongue.setAttribute("cx",mx); R.tongue.setAttribute("cy",f1(my+(c+2*h)/2*.75)); R.tongue.setAttribute("rx",f1(w*.45)); R.tongue.setAttribute("ry",f1(Math.max(0,h*.3)));
+
+  R.rig.setAttribute("transform",`translate(${PIV[0]} ${f1(PIV[1]+F.hop)}) rotate(${f1(F.tilt)}) scale(${(1+F.sq).toFixed(3)} ${(1-F.sq).toFixed(3)}) translate(${-PIV[0]} ${-PIV[1]})`);
+  R.gshadow.setAttribute("rx",f1(330*(1+F.hop/500))); R.gshadow.setAttribute("opacity",f1(.3*(1+F.hop/400)*100)/100);
+  if(F.coin>.02){
+    const k=A_(S_(t*.009)), cx=hr.E[0], cy=hr.E[1]-95-k*120;
+    R.coin.setAttribute("transform",`translate(${f1(cx)} ${f1(cy)}) scale(${f1(Math.max(.15,A_(Math.cos(t*.012)))*100)/100} 1)`);
+    R.coin.setAttribute("opacity",f1(F.coin*100)/100);
+  } else R.coin.setAttribute("opacity",0);
+}
+
+/* ---------------- card detection ---------------- */
+const stage=$("#stage"), vid=$("#vid"), photo=$("#photo"), demo=$("#demo"), fx=$("#fx"), hero=$("#hero");
+const work=document.createElement("canvas"), wctx=work.getContext("2d",{willReadFrequently:true});
+function detect(srcEl, sw, sh){
+  const W=80, H=Math.max(24, Math.round(W*sh/sw));
+  work.width=W; work.height=H;
+  try{ wctx.drawImage(srcEl,0,0,W,H); }catch(e){ return null; }
+  const d=wctx.getImageData(0,0,W,H).data, N=W*H, m=new Uint8Array(N);
+  for(let i=0,p=0;i<N;i++,p+=4){
+    const r=d[p]/255,g=d[p+1]/255,b=d[p+2]/255, mx=Math.max(r,g,b), mn=Math.min(r,g,b), c=mx-mn;
+    if(mx<.16 || c/mx<.35) continue;
+    let h = mx===r ? ((g-b)/c)%6 : mx===g ? (b-r)/c+2 : (r-g)/c+4;
+    h*=60; if(h<0) h+=360;
+    if(h>=245 && h<=302) m[i]=1;
+  }
+  const lab=new Uint8Array(N), st=[]; let best=null;
+  for(let i=0;i<N;i++){
+    if(!m[i]||lab[i]) continue;
+    let cnt=0,x0=W,y0=H,x1=0,y1=0; st.push(i); lab[i]=1;
+    while(st.length){
+      const k=st.pop(), x=k%W, y=(k/W)|0; cnt++;
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+      if(x>0   && m[k-1] && !lab[k-1]){lab[k-1]=1;st.push(k-1);}
+      if(x<W-1 && m[k+1] && !lab[k+1]){lab[k+1]=1;st.push(k+1);}
+      if(y>0   && m[k-W] && !lab[k-W]){lab[k-W]=1;st.push(k-W);}
+      if(y<H-1 && m[k+W] && !lab[k+W]){lab[k+W]=1;st.push(k+W);}
+    }
+    if(!best||cnt>best.cnt) best={cnt,x0,y0,x1,y1};
+  }
+  if(!best) return null;
+  const bw=best.x1-best.x0+1, bh=best.y1-best.y0+1, ar=bw/bh;
+  if(best.cnt/N < .025 || best.cnt/(bw*bh) < .4 || ar<.35 || ar>3.4) return null;
+  return {x:best.x0/W, y:best.y0/H, w:bw/W, h:bh/H};
+}
+
+let mode=null, stream=null, raf=0, box=null, seen=0, miss=0, frames=0, shown=false, leaving=0, lastS=null;
+function source(){
+  if(mode==="cam") return vid.videoWidth ? {el:vid,w:vid.videoWidth,h:vid.videoHeight} : null;
+  if(mode==="photo") return photo.naturalWidth ? {el:photo,w:photo.naturalWidth,h:photo.naturalHeight} : null;
+  if(mode==="demo") return {el:demo,w:demo.width,h:demo.height};
+  return null;
+}
+
+function rr(x,a,b,w,h,r){x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath();}
+function sizeDemo(){ const r=stage.getBoundingClientRect(); demo.width=Math.max(200,Math.round(r.width)); demo.height=Math.max(200,Math.round(r.height)); }
+function drawDemo(t){
+  const x=demo.getContext("2d"), W=demo.width, H=demo.height;
+  const g=x.createLinearGradient(0,0,0,H); g.addColorStop(0,"#2E231D"); g.addColorStop(1,"#140F0C");
+  x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.strokeStyle="rgba(255,235,210,.05)"; x.lineWidth=2;
+  for(let y=6;y<H;y+=16){x.beginPath();x.moveTo(0,y);x.bezierCurveTo(W*.3,y+5,W*.6,y-5,W,y+2);x.stroke();}
+  const cw=Math.min(W*.58,320), ch=cw/1.586;
+  const cx=W/2+Math.sin(t*.0005)*W*.08, cy=H*.68+Math.cos(t*.0004)*H*.03, a=Math.sin(t*.00035)*.14;
+  x.save(); x.translate(cx,cy); x.rotate(a);
+  x.shadowColor="rgba(0,0,0,.55)"; x.shadowBlur=26; x.shadowOffsetY=12;
+  const cg=x.createLinearGradient(-cw/2,-ch/2,cw/2,ch/2); cg.addColorStop(0,"#7A12FF"); cg.addColorStop(1,"#5800D0");
+  x.fillStyle=cg; rr(x,-cw/2,-ch/2,cw,ch,cw*.05); x.fill(); x.shadowColor="transparent";
+  x.fillStyle="#E8C86A"; rr(x,-cw/2+cw*.09,-ch*.14,cw*.13,ch*.22,4); x.fill();
+  x.fillStyle="#FFFFFF"; x.font=`700 ${Math.round(cw*.1)}px Unbounded, sans-serif`; x.fillText("uzum",-cw/2+cw*.08,ch/2-ch*.13);
+  x.restore();
+}
+
+function toStage(b,s){
+  const r=stage.getBoundingClientRect(), sc=Math.max(r.width/s.w, r.height/s.h);
+  const dw=s.w*sc, dh=s.h*sc, ox=(r.width-dw)/2, oy=(r.height-dh)/2;
+  return {x:ox+b.x*dw, y:oy+b.y*dh, w:b.w*dw, h:b.h*dh, W:r.width, H:r.height};
+}
+function lerpBox(a,b,k){return {x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k,w:a.w+(b.w-a.w)*k,h:a.h+(b.h-a.h)*k};}
+
+/* confetti */
+let confetti=[];
+function burst(x,y){
+  const cols=["#3DF5B0","#C9B3FF","#FFC531","#FF6FB5","#FFFFFF","#7000FF"];
+  for(let i=0;i<90;i++){ const a=Math.random()*Math.PI*2, v=3+Math.random()*7;
+    confetti.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-5,r:Math.random()*6,s:3+Math.random()*5,c:cols[i%cols.length],life:120+Math.random()*60}); }
+}
+function drawFx(p, solid){
+  const r=stage.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1), x=fx.getContext("2d");
+  if(fx.width!==Math.round(r.width*dpr)||fx.height!==Math.round(r.height*dpr)){fx.width=Math.round(r.width*dpr); fx.height=Math.round(r.height*dpr);}
+  x.setTransform(dpr,0,0,dpr,0,0); x.clearRect(0,0,r.width,r.height);
+  if(p){
+    const L=Math.min(p.w,p.h)*.24;
+    x.strokeStyle="#3DF5B0"; x.lineWidth=3; x.lineCap="round"; x.setLineDash(solid?[]:[6,6]);
+    x.fillStyle="rgba(61,245,176,.06)"; x.fillRect(p.x,p.y,p.w,p.h);
+    [[p.x,p.y,1,1],[p.x+p.w,p.y,-1,1],[p.x,p.y+p.h,1,-1],[p.x+p.w,p.y+p.h,-1,-1]].forEach(([a,b,sx,sy])=>{ x.beginPath(); x.moveTo(a,b+sy*L); x.lineTo(a,b); x.lineTo(a+sx*L,b); x.stroke(); });
+    x.setLineDash([]);
+  }
+  confetti=confetti.filter(c=>c.life-->0);
+  confetti.forEach(c=>{ c.vy+=.25; c.vx*=.99; c.x+=c.vx; c.y+=c.vy; c.r+=.15; x.save(); x.translate(c.x,c.y); x.rotate(c.r); x.fillStyle=c.c; x.fillRect(-c.s/2,-c.s,c.s,c.s*2); x.restore(); });
+}
+
+function placeHero(p){
+  const size=Math.max(160, Math.min(p.w*1.3, 360, p.W*.8)), hh=size*1290/1420;
+  let left=p.x+p.w/2-size*.563, top=p.y+p.h*.3-hh*.92;
+  left=Math.max(-size*.12, Math.min(p.W-size*.88, left)); top=Math.max(-hh*.15, top);
+  hero.style.width=size+"px"; hero.style.transform=`translate3d(${left}px,${top}px,0)`;
+}
+
+/* ---------------- loop ---------------- */
+function tick(t){
+  if(mode==="demo") drawDemo(t);
+  const s=source(); let p=null, solid=false;
+  if(s){
+    frames++;
+    const r = (frames%2===0 || !box) ? detect(s.el,s.w,s.h) : {...box};
+    if(r){
+      miss=0; seen++; box = box ? lerpBox(box,r,.35) : r;
+      $("#reticle").hidden=true; p=toStage(box,s); solid=seen>=3; placeHero(p);
+      if(leaving){ clearTimeout(leaving); leaving=0; returnBack(); }
+      if(seen>=3 && !shown) appear();
+    }else{
+      seen=0; miss++;
+      if(box && miss<=18) p=toStage(box,s);
+      if(miss>18){ box=null; $("#reticle").hidden=false; if(shown && !leaving) startLeaving(); }
+      if(mode==="photo" && frames===40 && !shown)
+        setSheet("Нет совпадения","Карту не нашли","Сними ближе и при свете, чтобы фиолетовая сторона карты заняла хотя бы пятую часть кадра.");
+    }
+  }
+  drawFx(p,solid);
+  if(!hero.hidden) renderRig(t);
+  raf=requestAnimationFrame(tick);
+}
+
+/* ---------------- story ---------------- */
+let factI=0, typeT=0, advT=0, tagT=0, voice=false, fived=false, firstMeet=true;
+const facts=()=>SCRIPTS[script];
+const fill=s=>s;
+function setStatus(txt,on){ $("#statusTxt").textContent=txt; $("#status").classList.toggle("on",!!on); }
+function setSheet(k,t,l){ $("#kicker").textContent=k; $("#title").textContent=t; $("#line").textContent=l; }
+function renderDots(){ $("#dots").innerHTML=facts().map((_,i)=>`<i class="${i<=factI?"on":""}"></i>`).join(""); }
+function tag(text, react, ms){
+  const el=$("#htag"); clearTimeout(tagT);
+  el.hidden=false; el.textContent=text; el.classList.toggle("react",!!react);
+  el.style.animation="none"; void el.offsetWidth; el.style.animation="";
+  if(ms) tagT=setTimeout(()=>{ if(shown) tag(fill(facts()[factI].num)); },ms);
+}
+function react(name, ms){ tempPose=name; tempUntil=performance.now()+ms; }
+
+function appear(){
+  shown=true; hero.hidden=false; requestAnimationFrame(()=>hero.classList.add("in"));
+  setStatus("Карта найдена",true); $("#nextBtn").disabled=false;
+  if(firstMeet){
+    firstMeet=false; react("look",1500);
+    tag("О, коллега!", true);
+    setTimeout(()=>{ if(shown) sayFact(factI); },1500);
+  } else sayFact(factI);
+}
+function startLeaving(){
+  stopTalk(); poseName="sad"; tag("Эй, ты куда?", true);
+  leaving=setTimeout(()=>{ leaving=0; disappear(); },900);
+}
+function returnBack(){ tag("Фух, нашёлся!", true, 1200); react("giggle",900); setTimeout(()=>{ if(shown) sayFact(factI); },900); }
+function disappear(){
+  shown=false; hero.classList.remove("in"); stopTalk();
+  setTimeout(()=>{ if(!shown) hero.hidden=true; },500);
+  setStatus("Ищу карту",false); $("#nextBtn").disabled=true;
+  setSheet("Пауза","Карта ушла из кадра","Верни её в кадр, и рассказ продолжится с того же места.");
+}
+function stopTalk(){ clearInterval(typeT); clearTimeout(advT); talking=false; try{speechSynthesis.cancel();}catch(e){} }
+function scheduleNext(){
+  clearTimeout(advT); const f=facts()[factI];
+  if(f.tap && !fived) return;
+  if(factI<facts().length-1) advT=setTimeout(()=>{ if(shown) sayFact(factI+1); },3800);
+}
+function sayFact(i){
+  stopTalk(); factI=i; const f=facts()[i];
+  poseName=f.pose; tempPose=null;
+  $("#kicker").textContent=`${i+1} / ${facts().length}`; $("#title").textContent=fill(f.title);
+  tag(fill(f.num));
+  $("#nextBtn").textContent = i===facts().length-1 ? "Сначала" : "Дальше";
+  renderDots();
+  const text=fill(f.text), line=$("#line"); let k=0; line.textContent=""; talking=true;
+  typeT=setInterval(()=>{ k+=2; line.textContent=text.slice(0,k);
+    if(k>=text.length){ clearInterval(typeT); if(!voice){ talking=false; scheduleNext(); } } },28);
+  if(voice) speak(text);
+}
+function speak(text){
+  try{
+    const u=new SpeechSynthesisUtterance(text); u.lang="ru-RU"; u.rate=1.05; u.pitch=1.35;
+    const v=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.startsWith("ru")); if(v) u.voice=v;
+    u.onend=()=>{ talking=false; scheduleNext(); };
+    speechSynthesis.speak(u);
+  }catch(e){ voice=false; $("#voiceBtn").setAttribute("aria-pressed","false"); talking=false; scheduleNext(); }
+}
+function next(){ if(!shown) return; if(factI===facts().length-1){ fived=false; sayFact(0); } else sayFact(factI+1); }
+
+let lastReact=-1;
+function onHeroTap(){
+  if(!shown) return;
+  const f=facts()[factI];
+  if(f.tap==="five" && !fived){
+    fived=true; stopTalk();
+    const r=hero.getBoundingClientRect(), sr=stage.getBoundingClientRect();
+    burst(r.left-sr.left+r.width*.7, r.top-sr.top+r.height*.15);
+    poseName="dance"; tag("Е-е-е!", true);
+    $("#title").textContent="Пять отбито!";
+    $("#line").textContent="Теперь мы команда. Покажи меня друзьям: пусть тоже наведут камеру на свою карту.";
+    return;
+  }
+  let i; do{ i=Math.floor(Math.random()*REACTIONS.length);}while(i===lastReact); lastReact=i;
+  react("giggle",1300); tag(REACTIONS[i], true, 1600);
+}
+
+/* ---------------- modes ---------------- */
+function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+function resetStory(){ factI=0; fived=false; firstMeet=true; poseName="idle"; }
+function setMode(m){
+  cancelAnimationFrame(raf); stopTalk(); clearTimeout(leaving); leaving=0;
+  mode=m; box=null; seen=0; miss=0; frames=0; shown=false; resetStory();
+  hero.classList.remove("in"); hero.hidden=true; $("#htag").hidden=true; 
+  vid.hidden=m!=="cam"; photo.hidden=m!=="photo"; demo.hidden=m!=="demo";
+  $("#start").hidden=true; $("#reticle").hidden=false; $("#modeBtn").hidden=false;
+  setStatus("Ищу карту",false); $("#nextBtn").disabled=true; renderDots();
+  setSheet({cam:"Камера",photo:"Фото",demo:"Демо"}[m],"Ищу карту Uzum","Держи телефон в 20–30 см от карты. Маскот появится, как только увидит её.");
+  if(m==="demo") sizeDemo();
+  raf=requestAnimationFrame(tick);
+}
+function showStart(msg){
+  cancelAnimationFrame(raf); stopTalk(); stopStream(); mode=null; clearTimeout(leaving); leaving=0;
+  hero.hidden=true; hero.classList.remove("in"); confetti=[]; drawFx(null); $("#reticle").hidden=true;
+  [vid,photo,demo].forEach(e=>e.hidden=true);
+  $("#start").hidden=false; $("#modeBtn").hidden=true; $("#startMsg").textContent=msg||"";
+  setStatus("Готов",false); $("#nextBtn").disabled=true;
+  setSheet("Режим ожидания","Положи карту на стол","Держи телефон в 20–30 см от карты, при хорошем свете. Маскот появится сам.");
+}
+
+$("#camBtn").onclick=async()=>{
+  $("#startMsg").textContent="Запрашиваю камеру…";
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280}},audio:false});
+    vid.srcObject=stream; await vid.play(); setMode("cam");
+  }catch(e){
+    stopStream();
+    $("#startMsg").textContent="Живая камера в этом окне закрыта. Сфотографируй карту или запусти демо. На собственном HTTPS-хостинге или в Telegram Web App камера включится сразу.";
+  }
+};
+$("#photoIn").onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; photo.onload=()=>setMode("photo"); photo.src=URL.createObjectURL(f); e.target.value=""; };
+$("#demoBtn").onclick=()=>setMode("demo");
+$("#modeBtn").onclick=()=>showStart();
+$("#nextBtn").onclick=next;
+hero.onclick=onHeroTap;
+hero.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); onHeroTap(); } };
+$("#voiceBtn").onclick=()=>{
+  if(!("speechSynthesis" in window)) return;
+  voice=!voice; $("#voiceBtn").setAttribute("aria-pressed",String(voice));
+  if(shown) sayFact(factI);
+};
+addEventListener("resize",()=>{ if(mode==="demo") sizeDemo(); });
+renderDots();
+</script>
+
+</body>
+</html>

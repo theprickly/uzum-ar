@@ -1,0 +1,6 @@
+/*
+  Permissions-Policy: camera=(self)
+  X-Content-Type-Options: nosniff
+
+/*.webp
+  Cache-Control: public, max-age=604800
