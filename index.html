@@ -345,30 +345,66 @@ function renderRig(t){
 /* ======================= CARD DETECTION + POSE ======================= */
 const work=document.createElement("canvas"), wctx=work.getContext("2d",{willReadFrequently:true});
 let light={r:.5,g:.5,b:.5,l:.5};
+function fitLine(pts){ let mx=0,my=0; pts.forEach(p=>{mx+=p[0];my+=p[1];}); mx/=pts.length; my/=pts.length;
+  let sxx=0,syy=0,sxy=0; pts.forEach(p=>{ const dx=p[0]-mx, dy=p[1]-my; sxx+=dx*dx; syy+=dy*dy; sxy+=dx*dy; });
+  const ang=.5*Math.atan2(2*sxy,sxx-syy); return {mx,my,dx:Math.cos(ang),dy:Math.sin(ang)}; }
+function intersect(L1,L2){ const det=L1.dx*(-L2.dy)-L1.dy*(-L2.dx); if(Math.abs(det)<1e-6) return null;
+  const rx=L2.mx-L1.mx, ry=L2.my-L1.my; const t=(rx*(-L2.dy)-ry*(-L2.dx))/det; return [L1.mx+L1.dx*t, L1.my+L1.dy*t]; }
+function segDist(p,a,b){ const vx=b[0]-a[0], vy=b[1]-a[1], L=vx*vx+vy*vy||1; let t=((p[0]-a[0])*vx+(p[1]-a[1])*vy)/L; const tt=t; t=Math.max(0,Math.min(1,t));
+  return {d:Math.hypot(a[0]+vx*t-p[0],a[1]+vy*t-p[1]), t:tt}; }
+function refineCorners(cs,edge){
+  let c=cs;
+  for(let it=0;it<2;it++){
+    const sides=[[],[],[],[]];
+    edge.forEach(p=>{ let best=-1,bd=1e9,bt=0; for(let s=0;s<4;s++){ const r=segDist(p,c[s],c[(s+1)%4]); if(r.d<bd){bd=r.d;best=s;bt=r.t;} }
+      if(bt>.14&&bt<.86) sides[best].push(p); });
+    if(sides.some(sd=>sd.length<6)) return c;
+    const L=sides.map(fitLine); const nc=[];
+    for(let s=0;s<4;s++){ const q=intersect(L[(s+3)%4],L[s]); if(!q) return c; nc.push(q); }
+    c=nc;
+  }
+  return c;
+}
 function detect(srcEl,sw,sh){
-  const W=140, H=Math.max(40,Math.round(W*sh/sw)); work.width=W; work.height=H;
+  const W=220, H=Math.max(60,Math.round(W*sh/sw)); work.width=W; work.height=H;
   try{ wctx.drawImage(srcEl,0,0,W,H); }catch(e){ return null; }
   const d=wctx.getImageData(0,0,W,H).data, N=W*H, m=new Uint8Array(N); let sr=0,sg=0,sb=0;
   for(let i=0,p=0;i<N;i++,p+=4){ const r=d[p]/255,g=d[p+1]/255,b=d[p+2]/255; sr+=r; sg+=g; sb+=b;
-    const mx=Math.max(r,g,b), mn=Math.min(r,g,b), c=mx-mn; if(mx<.16||c/mx<.35) continue;
-    let h=mx===r?((g-b)/c)%6:mx===g?(b-r)/c+2:(r-g)/c+4; h*=60; if(h<0)h+=360; if(h>=245&&h<=302) m[i]=1; }
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b), c=mx-mn; if(mx<.14||c/mx<.32) continue;
+    let h=mx===r?((g-b)/c)%6:mx===g?(b-r)/c+2:(r-g)/c+4; h*=60; if(h<0)h+=360; if(h>=240&&h<=305) m[i]=1; }
   light={r:sr/N,g:sg/N,b:sb/N,l:(.2126*sr+.7152*sg+.0722*sb)/N};
-  const lab=new Uint8Array(N), st=[]; let best=null;
-  for(let i=0;i<N;i++){ if(!m[i]||lab[i]) continue;
+  /* close small holes (text, glare) so the blob is solid */
+  const m2=new Uint8Array(N); for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){ const k=y*W+x; m2[k]=m[k]||(m[k-1]+m[k+1]+m[k-W]+m[k+W]>=3)?1:0; }
+  const lab=new Int32Array(N), st=[]; let best=null, id=0;
+  for(let i=0;i<N;i++){ if(!m2[i]||lab[i]) continue; id++;
     let cnt=0,x0=W,y0=H,x1=0,y1=0, sMin=1e9,sMax=-1e9,dMin=1e9,dMax=-1e9, cs=[0,0,0,0];
-    st.push(i); lab[i]=1;
+    st.push(i); lab[i]=id;
     while(st.length){ const k=st.pop(), x=k%W, y=(k/W)|0; cnt++;
       if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
       const s=x+y, dd=x-y; if(s<sMin){sMin=s;cs[0]=k;} if(s>sMax){sMax=s;cs[2]=k;} if(dd>dMax){dMax=dd;cs[1]=k;} if(dd<dMin){dMin=dd;cs[3]=k;}
-      if(x>0&&m[k-1]&&!lab[k-1]){lab[k-1]=1;st.push(k-1);} if(x<W-1&&m[k+1]&&!lab[k+1]){lab[k+1]=1;st.push(k+1);}
-      if(y>0&&m[k-W]&&!lab[k-W]){lab[k-W]=1;st.push(k-W);} if(y<H-1&&m[k+W]&&!lab[k+W]){lab[k+W]=1;st.push(k+W);} }
-    if(!best||cnt>best.cnt) best={cnt,x0,y0,x1,y1,cs}; }
+      if(x>0&&m2[k-1]&&!lab[k-1]){lab[k-1]=id;st.push(k-1);} if(x<W-1&&m2[k+1]&&!lab[k+1]){lab[k+1]=id;st.push(k+1);}
+      if(y>0&&m2[k-W]&&!lab[k-W]){lab[k-W]=id;st.push(k-W);} if(y<H-1&&m2[k+W]&&!lab[k+W]){lab[k+W]=id;st.push(k+W);} }
+    if(!best||cnt>best.cnt) best={cnt,x0,y0,x1,y1,cs,id}; }
   if(!best) return null;
   const bw=best.x1-best.x0+1, bh=best.y1-best.y0+1, ar=bw/bh;
   if(best.cnt/N<.02||best.cnt/(bw*bh)<.38||ar<.3||ar>3.6) return null;
-  const pts=best.cs.map(k=>[(k%W+.5)/W,(((k/W)|0)+.5)/H]);   // TL, TR, BR, BL (image order)
+  const edge=[]; const L=best.id;   // outer contour only: first/last blob pixel per row and per column
+  for(let y=best.y0;y<=best.y1;y++){ let a=-1,b=-1; for(let x=best.x0;x<=best.x1;x++) if(lab[y*W+x]===L){ if(a<0)a=x; b=x; } if(a>=0){ edge.push([a,y+.5]); edge.push([b+1,y+.5]); } }
+  for(let x=best.x0;x<=best.x1;x++){ let a=-1,b=-1; for(let y=best.y0;y<=best.y1;y++) if(lab[y*W+x]===L){ if(a<0)a=y; b=y; } if(a>=0){ edge.push([x+.5,a]); edge.push([x+.5,b+1]); } }
+  let cs=best.cs.map(k=>[(k%W)+.5,((k/W)|0)+.5]);
+  cs=refineCorners(cs,edge);
+  const pts=cs.map(p=>[p[0]/W,p[1]/H]);
   return {x:best.x0/W,y:best.y0/H,w:bw/W,h:bh/H,pts};
 }
+/* One-Euro filter: smooth when still, responsive when moving */
+class OneEuro{ constructor(minC,beta,dC){ this.minC=minC; this.beta=beta; this.dC=dC; this.x=null; this.dx=0; this.t=0; }
+  a(c,dt){ const r=2*Math.PI*c*dt; return r/(r+1); }
+  f(x,t){ if(this.x===null){ this.x=x; this.t=t; return x; } const dt=Math.max(1e-3,(t-this.t)/1000); this.t=t;
+    const dx=(x-this.x)/dt; this.dx+= this.a(this.dC,dt)*(dx-this.dx);
+    const c=this.minC+this.beta*Math.abs(this.dx); this.x+=this.a(c,dt)*(x-this.x); return this.x; } }
+let filt=null;
+function resetFilt(){ filt=Array.from({length:8},()=>new OneEuro(.9,.012,1.2)); }
+resetFilt();
 function homography(src,dst){ // 4 pts: src model [X,Y], dst image [u,v]
   const A=[],b=[]; for(let i=0;i<4;i++){ const [X,Y]=src[i],[u,v]=dst[i];
     A.push([X,Y,1,0,0,0,-u*X,-u*Y]); b.push(u); A.push([0,0,0,X,Y,1,-v*X,-v*Y]); b.push(v); }
@@ -377,11 +413,13 @@ function homography(src,dst){ // 4 pts: src model [X,Y], dst image [u,v]
     for(let r=0;r<8;r++){ if(r===c) continue; const f=A[r][c]/pv; for(let k=c;k<8;k++) A[r][k]-=f*A[c][k]; b[r]-=f*b[c]; } }
   return b.map((v,i)=>v/A[i][i]);
 }
+let landscape=true;
 function poseFromCorners(img,f,cx,cy){
   const d1=Math.hypot(img[1][0]-img[0][0],img[1][1]-img[0][1])+Math.hypot(img[2][0]-img[3][0],img[2][1]-img[3][1]);
   const d2=Math.hypot(img[3][0]-img[0][0],img[3][1]-img[0][1])+Math.hypot(img[2][0]-img[1][0],img[2][1]-img[1][1]);
   const w=CW/2,h=CH/2;
-  const model=d1>=d2 ? [[-w,-h],[w,-h],[w,h],[-w,h]] : [[-w,h],[-w,-h],[w,-h],[w,h]];
+  if(landscape&&d2>d1*1.18) landscape=false; else if(!landscape&&d1>d2*1.18) landscape=true;
+  const model=landscape ? [[-w,-h],[w,-h],[w,h],[-w,h]] : [[-w,h],[-w,-h],[w,-h],[w,h]];
   const H=homography(model,img); if(!H) return null;
   const col=(i)=>[H[i],H[i+3],i===2?1:H[i+6]];
   const kin=v=>[(v[0]-cx*v[2])/f,(v[1]-cy*v[2])/f,v[2]];
@@ -403,9 +441,13 @@ function source(){
 function stageMap(s){ const r=stage.getBoundingClientRect(), sc=Math.max(r.width/s.w,r.height/s.h); return {W:r.width,H:r.height,sc,ox:(r.width-s.w*sc)/2,oy:(r.height-s.h*sc)/2}; }
 function focal(s,M){ const fLong=(Math.max(s.w,s.h)/2)/Math.tan(33*Math.PI/180); return fLong*M.sc; }
 let yawCur=0;
+let qPrev=null, tPrev=null; const _m=new THREE.Matrix4(), _q=new THREE.Quaternion(), _t=new THREE.Vector3(), _s=new THREE.Vector3();
 function applyPose(pose){
   const {r1,r2,r3,t}=pose;
-  world.matrix.set(r1[0],r2[0],r3[0],t[0], -r1[1],-r2[1],-r3[1],-t[1], -r1[2],-r2[2],-r3[2],-t[2], 0,0,0,1);
+  _m.set(r1[0],r2[0],r3[0],t[0], -r1[1],-r2[1],-r3[1],-t[1], -r1[2],-r2[2],-r3[2],-t[2], 0,0,0,1); _m.decompose(_t,_q,_s);
+  if(!qPrev){ qPrev=_q.clone(); tPrev=_t.clone(); }
+  else { const ang=qPrev.angleTo(_q), k=clamp(.25+ang*3,.25,.9); qPrev.slerp(_q,k); tPrev.lerp(_t,clamp(.35+tPrev.distanceTo(_t)*.08,.35,.9)); }
+  world.matrix.compose(tPrev,qPrev,_s.set(1,1,1));
   world.matrixWorldNeedsUpdate=true; scene.updateMatrixWorld(true);
   const camLocal=root.worldToLocal(V3(0,0,0)); const yaw=Math.atan2(camLocal.x,camLocal.z);
   let dy=yaw-yawCur; while(dy>Math.PI) dy-=2*Math.PI; while(dy<-Math.PI) dy+=2*Math.PI; yawCur+=dy*.15; yawG.rotation.y=yawCur;
@@ -638,7 +680,10 @@ function tick(t){
     if(r){
       miss=0; seen++;
       const img=r.pts.map(p=>[M.ox+p[0]*s.w*M.sc, M.oy+p[1]*s.h*M.sc]);
-      if(!corners) corners=img; else corners=corners.map((c,i)=>[c[0]+(img[i][0]-c[0])*.35, c[1]+(img[i][1]-c[1])*.35]);
+      let raw=img;
+      if(corners){ let bestR=0,bd=1e9; for(let rot=0;rot<4;rot++){ let dsum=0; for(let i=0;i<4;i++){ const q=img[(i+rot)%4]; dsum+=Math.hypot(q[0]-corners[i][0],q[1]-corners[i][1]); } if(dsum<bd){bd=dsum;bestR=rot;} }
+        raw=[0,1,2,3].map(i=>img[(i+bestR)%4]); }
+      corners=raw.map((c,i)=>[filt[i*2].f(c[0],t),filt[i*2+1].f(c[1],t)]);
       const pose=poseFromCorners(corners,f,M.W/2,M.H/2);
       if(pose){ resizeGL(M.W,M.H,f); applyPose(pose); poseOK=true; }
       quad=corners; const xs=corners.map(c=>c[0]), ys=corners.map(c=>c[1]);
@@ -651,7 +696,7 @@ function tick(t){
       else if(seen>=5&&!shown&&exitT>0){ exitT=-1; appear(); }
     } else {
       seen=0; miss++;
-      if(miss>18){ corners=null; if(!shown||leaving) $("#reticle").hidden=false; if(shown&&!leaving) startLeaving(); }
+      if(miss>18){ corners=null; resetFilt(); qPrev=null; if(!shown||leaving) $("#reticle").hidden=false; if(shown&&!leaving) startLeaving(); }
     }
   }
   updateLight();
@@ -670,7 +715,7 @@ function tick(t){
 function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
 function setMode(m){
   cancelAnimationFrame(raf); storyId++; cancelChoice(); stopSpeech(); clearTimeout(leaving); leaving=0;
-  mode=m; corners=null; seen=0; miss=0; frames=0; shown=false; firstMeet=true; sceneI=0; poseName="idle"; enterT=-1; exitT=-1; poseOK=false;
+  mode=m; corners=null; resetFilt(); qPrev=null; landscape=true; seen=0; miss=0; frames=0; shown=false; firstMeet=true; sceneI=0; poseName="idle"; enterT=-1; exitT=-1; poseOK=false;
   yawG.visible=false; htag.hidden=true; clearProps();
   vid.hidden=m!=="cam"; demo.hidden=m!=="demo"; $("#start").hidden=true; $("#reticle").hidden=false; $("#camPill").hidden=m!=="demo";
   buildSubs(m==="demo"?"Это демо. Смотри, сейчас я оживу!":"Положи карту на стол и наведи на неё камеру…"); highlight(1e9);
