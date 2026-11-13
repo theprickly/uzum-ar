@@ -1,6 +1,7 @@
 /*
   Permissions-Policy: camera=(self)
   X-Content-Type-Options: nosniff
+  X-Robots-Tag: noindex, nofollow
 
 /*.webp
   Cache-Control: public, max-age=604800
